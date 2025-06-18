@@ -1,0 +1,14 @@
+1e01399f1c59d6342e44f07293a5235f *DESCRIPTION
+36a798e4b5ce7132df76020e8b628cd7 *NAMESPACE
+90aad6dcf17839b405524d86b953d03f *NEWS.md
+767cb277560600a409f1053ac484c6a2 *R/DPI.R
+e691ea06507a6a2cca2d318b9dc2932b *README.md
+3b50de28b63dba4645e7b012f431f71d *man/DPI.Rd
+a83395420a84d1ef874a7c3e1a5a29ca *man/DPI_curve.Rd
+1f1d757643368dd3ab593acad0414250 *man/cor_network.Rd
+424d043ff0c4ddb4218e579c6e116d6a *man/data_random.Rd
+31f672f95412def18f73e5a5edd76db7 *man/plot.dpi.Rd
+1b857e43f503d16daccb803f85ed3624 *man/plot.dpi.curve.Rd
+68140e110082da19e8a34fc392cb9e31 *man/print.dpi.Rd
+b8d09b804046bdd48e062313679cee75 *man/print.summary.dpi.Rd
+3e9cab9536146434834be7e71158fbd0 *man/summary.dpi.Rd
