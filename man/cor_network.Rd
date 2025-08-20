@@ -2,7 +2,7 @@
 % Please edit documentation in R/DPI.R
 \name{cor_network}
 \alias{cor_network}
-\title{Correlation network plot.}
+\title{Correlation and partial correlation networks.}
 \usage{
 cor_network(
   data,
@@ -11,12 +11,13 @@ cor_network(
   show.insig = FALSE,
   show.cutoff = FALSE,
   faded = FALSE,
-  text.size = 1.2,
+  node.text.size = 1.2,
   node.group = NULL,
   node.color = NULL,
   edge.color.pos = "#0571B0",
   edge.color.neg = "#CA0020",
-  edge.color.insig = "#EEEEEEEE",
+  edge.color.non = "#EEEEEEEE",
+  edge.label.mrg = 0.01,
   title = NULL,
   file = NULL,
   width = 6,
@@ -28,8 +29,7 @@ cor_network(
 \arguments{
 \item{data}{Data.}
 
-\item{index}{Type of graph: \code{"cor"} (raw correlation network)
-or \code{"pcor"} (partial correlation network).
+\item{index}{Type of graph: \code{"cor"} (raw correlation network) or \code{"pcor"} (partial correlation network).
 Defaults to \code{"cor"}.}
 
 \item{show.value}{Show correlation coefficients and their significance on edges.
@@ -37,8 +37,7 @@ Defaults to \code{TRUE}.}
 
 \item{show.insig}{Show edges with insignificant correlations (\emph{p} > 0.05).
 Defaults to \code{FALSE}.
-To change significance level, please set the
-\code{alpha} parameter (defaults to \code{alpha=0.05}).}
+To change significance level, please set \code{alpha} (defaults to \code{alpha=0.05}).}
 
 \item{show.cutoff}{Show cut-off values of correlations.
 Defaults to \code{FALSE}.}
@@ -46,23 +45,20 @@ Defaults to \code{FALSE}.}
 \item{faded}{Transparency of edges according to the effect size of correlation.
 Defaults to \code{FALSE}.}
 
-\item{text.size}{Scalar on the font size of variable labels.
+\item{node.text.size}{Scalar on the font size of node (variable) labels.
 Defaults to \code{1.2}.}
 
-\item{node.group}{A list that indicates which nodes belong together,
-with each element of list as a vector of integers identifying the
-column numbers of variables that belong together.}
+\item{node.group}{A list that indicates which nodes belong together, with each element of list as a vector of integers identifying the column numbers of variables that belong together.}
 
 \item{node.color}{A vector with a color for each element in \code{node.group}, or a color for each node.}
 
-\item{edge.color.pos}{Color for (significant) positive correlations.
-Defaults to \code{"#0571B0"} (blue in ColorBrewer's RdBu palette).}
+\item{edge.color.pos}{Color for (significant) positive values. Defaults to \code{"#0571B0"} (blue in ColorBrewer's RdBu palette).}
 
-\item{edge.color.neg}{Color for (significant) negative correlations.
-Defaults to \code{"#CA0020"} (red in ColorBrewer's RdBu palette).}
+\item{edge.color.neg}{Color for (significant) negative values. Defaults to \code{"#CA0020"} (red in ColorBrewer's RdBu palette).}
 
-\item{edge.color.insig}{Color for insignificant correlations.
-Defaults to \code{"#EEEEEEEE"} (transparent grey).}
+\item{edge.color.non}{Color for insignificant values. Defaults to \code{"#EEEEEEEE"} (transparent grey).}
+
+\item{edge.label.mrg}{Margin of the background box around the edge label. Defaults to \code{0.01}.}
 
 \item{title}{Plot title.}
 
@@ -73,16 +69,26 @@ Defaults to \code{6} and \code{4}.}
 
 \item{dpi}{Dots per inch (figure resolution). Defaults to \code{500}.}
 
-\item{...}{Other parameters passed to \code{\link[qgraph:qgraph]{qgraph}}.}
+\item{...}{Arguments passed on to \code{\link[qgraph:qgraph]{qgraph()}}.}
 }
 \value{
-Invisibly return a \code{\link[qgraph:qgraph]{qgraph}} object.
+Return a list (class \code{cor.net}) of (partial) correlation results and \code{\link[qgraph:qgraph]{qgraph}} object with its \code{\link[cowplot:as_grob]{grob}} (Grid Graphical Object).
 }
 \description{
-Correlation network plot.
+Correlation and partial correlation networks (also called Gaussian graphical models, GGMs).
 }
 \examples{
+# correlation network
 cor_network(airquality)
 cor_network(airquality, show.insig=TRUE)
 
+# partial correlation network
+cor_network(airquality, "pcor")
+cor_network(airquality, "pcor", show.insig=TRUE)
+
+}
+\seealso{
+\link{S3method.network}
+
+\code{\link[=dag_network]{dag_network()}}
 }

@@ -2,7 +2,7 @@
 
 🛸 The Directed Prediction Index (DPI).
 
-The *Directed Prediction Index* (DPI) is a simulation-based method for quantifying the *relative endogeneity* of outcome versus predictor variables in multiple linear regression models.
+The *Directed Prediction Index* (DPI) is a simulation-based method for quantifying the *relative endogeneity* (relative dependence) of outcome (*Y*) versus predictor (*X*) variables in multiple linear regression models.
 
 <!-- badges: start -->
 
@@ -14,7 +14,7 @@ The *Directed Prediction Index* (DPI) is a simulation-based method for quantifyi
 
 ## Author
 
-Han-Wu-Shuang (Bruce) Bao 包寒吴霜
+Bruce H. W. S. Bao 包寒吴霜
 
 📬 [baohws\@foxmail.com](mailto:baohws@foxmail.com)
 
@@ -22,8 +22,7 @@ Han-Wu-Shuang (Bruce) Bao 包寒吴霜
 
 ## Citation
 
--   Bao, H.-W.-S. (2025). *DPI: The Directed Prediction Index*. <https://CRAN.R-project.org/package=DPI>
-    -   *Note*: This is the original citation. Please refer to the information when you `library(DPI)` for the APA-7 format of the version you installed.
+-   Bao, H. W. S. (2025). *DPI: The Directed Prediction Index*. <https://doi.org/10.32614/CRAN.package.DPI>
 
 ## Installation
 
@@ -48,6 +47,6 @@ $$
 
 In econometrics and broader social sciences, an *exogenous* variable is assumed to have a unidirectional (causal or quasi-causal) influence on an *endogenous* variable ($ExoVar \rightarrow EndoVar$). By quantifying the *relative endogeneity* of outcome versus predictor variables in multiple linear regression models, the DPI can suggest a more plausible direction of influence (e.g., $\text{DPI}_{X \rightarrow Y} > 0 \text{: } X \rightarrow Y$) after controlling for a sufficient number of potential confounding variables.
 
-1.  It uses $\Delta R_{Y vs. X}^2$ to test whether $Y$ (outcome), compared to $X$ (predictor), can be *more strongly predicted* by $m$ observable control variables (included in a regression model) and $k$ unobservable random covariates (specified by `k.cov`; see `DPI`). A higher $R^2$ indicates *relatively higher dependence* (i.e., *relatively higher endogeneity*) in a given variable set.
+1.  It uses $\Delta R_{Y vs. X}^2$ to test whether $Y$ (outcome), compared to $X$ (predictor), can be *more strongly predicted* by $m$ observable control variables (included in a regression model) and $k$ unobservable random covariates (specified by `k.cov`; see the `DPI()` function). A higher $R^2$ indicates *relatively higher dependence* (i.e., *relatively higher endogeneity*) in a given variable set.
 2.  It also uses $t_{partial.r}^2$ to penalize insignificant partial correlation ($r_{partial}$, with equivalent $t$ test as $\beta_{partial}$) between $Y$ and $X$, while ignoring the sign ($\pm$) of this correlation. A higher $t^2$ (equivalent to $F$ test value when $df = 1$) indicates a more robust (less spurious) partial relationship when controlling for other variables.
 3.  Simulation samples with `k.cov` random covariates are generated to test the statistical significance of DPI.

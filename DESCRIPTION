@@ -1,17 +1,17 @@
 Package: DPI
 Title: The Directed Prediction Index
-Version: 2025.6
-Date: 2025-06-17
+Version: 2025.8
+Date: 2025-08-15
 Authors@R: 
-    c(person(given = "Han-Wu-Shuang",
+    c(person(given = "Han Wu Shuang",
              family = "Bao",
              role = c("aut", "cre"),
              email = "baohws@foxmail.com",
              comment = c(ORCID = "0000-0003-3043-710X")))
-Maintainer: Han-Wu-Shuang Bao <baohws@foxmail.com>
+Maintainer: Han Wu Shuang Bao <baohws@foxmail.com>
 Description: 
     The Directed Prediction Index ('DPI') is
-    a simulation-based and conservative method
+    a simulation-based method
     for quantifying the relative endogeneity (relative dependence)
     of outcome (Y) versus predictor (X) variables
     in multiple linear regression models.
@@ -28,12 +28,12 @@ Encoding: UTF-8
 URL: https://psychbruce.github.io/DPI/
 BugReports: https://github.com/psychbruce/DPI/issues
 Depends: R (>= 4.0.0)
-Imports: glue, crayon, cli, ggplot2, qgraph
+Imports: glue, crayon, cli, ggplot2, cowplot, qgraph, bnlearn
 Suggests: bruceR
 RoxygenNote: 7.3.2
 NeedsCompilation: no
-Packaged: 2025-06-17 09:27:27 UTC; Bruce
-Author: Han-Wu-Shuang Bao [aut, cre] (ORCID:
+Packaged: 2025-08-20 01:59:58 UTC; Bruce
+Author: Han Wu Shuang Bao [aut, cre] (ORCID:
     <https://orcid.org/0000-0003-3043-710X>)
 Repository: CRAN
-Date/Publication: 2025-06-18 08:50:05 UTC
+Date/Publication: 2025-08-20 03:30:02 UTC
