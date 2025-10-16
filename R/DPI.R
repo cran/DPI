@@ -6,11 +6,12 @@
 
 
 #' @import ggplot2
-#' @importFrom stats var sd cor na.omit
+#' @importFrom stats nobs var sd cor na.omit plogis
 #' @importFrom stats pt pnorm rnorm rbinom quantile qnorm
 #' @importFrom stats lm model.frame update coef df.residual
 #' @importFrom glue glue glue_col
 #' @importFrom crayon italic underline green blue magenta
+#' @importFrom cowplot draw_grob as_grob
 .onAttach = function(libname, pkgname) {
   inst.ver = as.character(utils::packageVersion("DPI"))
   pkgs = c("ggplot2", "cowplot")
@@ -32,13 +33,24 @@
     {underline https://psychbruce.github.io/DPI}
 
     {magenta To use this package in publications, please cite:}
-    Bao, H. W. S. (2025). {italic DPI: The Directed Prediction Index for quasi-causal inference with cross-sectional data} (Version {inst.ver}) [Computer software]. {underline https://doi.org/10.32614/CRAN.package.DPI}
+    Bao, H. W. S. (2025). {italic DPI: The Directed Prediction Index for causal inference from observational data} (Version {inst.ver}) [Computer software]. {underline https://doi.org/10.32614/CRAN.package.DPI}
 
     "))
 }
 
 
 #### Utils ####
+
+
+as_numeric = function(data) {
+  data = as.data.frame(data)
+  for(var in names(data)) {
+    if(inherits(data[[var]], c("numeric", "integer", "double", "logical")) |
+       (inherits(data[[var]], "factor") & nlevels(data[[var]])==2))
+      data[[var]] = as.numeric(data[[var]])
+  }
+  return(data)
+}
 
 
 #' Simulate data from a multivariate normal distribution.
@@ -53,24 +65,24 @@
 #' Return a data.frame of simulated data.
 #'
 #' @seealso
-#' [matrix_cor()]
+#' [cor_matrix()]
 #'
 #' [sim_data_exp()]
 #'
 #' @examples
 #' d1 = sim_data(n=100, k=5, seed=1)
-#' cor_network(d1)
+#' cor_net(d1)
 #'
 #' d2 = sim_data(n=100, k=5, cor=0.2, seed=1)
-#' cor_network(d2)
+#' cor_net(d2)
 #'
-#' cor.mat = matrix_cor(
+#' cor.mat = cor_matrix(
 #'   1.0, 0.7, 0.3,
 #'   0.7, 1.0, 0.5,
 #'   0.3, 0.5, 1.0
 #' )
 #' d3 = sim_data(n=100, cor=cor.mat, seed=1)
-#' cor_network(d3)
+#' cor_net(d3)
 #'
 #' @export
 sim_data = function(n, k, cor=NULL, exact=TRUE, seed=NULL) {
@@ -116,14 +128,20 @@ sim_data = function(n, k, cor=NULL, exact=TRUE, seed=NULL) {
 #' Return a symmetric correlation matrix.
 #'
 #' @examples
-#' matrix_cor(
+#' cor_matrix(
 #'   1.0, 0.7, 0.3,
 #'   0.7, 1.0, 0.5,
 #'   0.3, 0.5, 1.0
 #' )
 #'
+#' cor_matrix(
+#'   1.0, NA, NA,
+#'   0.7, 1.0, NA,
+#'   0.3, 0.5, 1.0
+#' )
+#'
 #' @export
-matrix_cor = function(...) {
+cor_matrix = function(...) {
   cor.vec = as.numeric(unlist(list(...)))
   matrix(cor.vec, nrow=sqrt(length(cor.vec)), byrow=TRUE)
 }
@@ -215,6 +233,61 @@ sim_data_exp = function(n, r.xy, approx=TRUE, tol=0.01, max.iter=30, verbose=FAL
 }
 
 
+#' Convert *p* values to approximate (pseudo) Bayes Factors (PseudoBF10).
+#'
+#' Convert *p* values to approximate (pseudo) Bayes Factors (PseudoBF10). This transformation has been suggested by Wagenmakers (2022).
+#'
+#' @param p *p* value(s).
+#' @param n Number of observations.
+#' @param log Return `log(BF10)` or raw `BF10`. Defaults to `FALSE`.
+#' @param label Add labels (i.e., names) to returned values. Defaults to `FALSE`.
+#'
+#' @return
+#' A (named) numeric vector of pseudo Bayes Factors (\eqn{\text{PseudoBF}_{10}}).
+#'
+#' @references
+#' Wagenmakers, E.-J. (2022). *Approximate objective Bayes factors from p-values and sample size: The \eqn{3p\sqrt{n}} rule.* PsyArXiv.
+#' \doi{10.31234/osf.io/egydq}
+#'
+#' @seealso
+#' [bayestestR::p_to_bf()]
+#'
+#' @examples
+#' p_to_bf(0.05, 100)
+#' p_to_bf(c(0.01, 0.05), 100)
+#' p_to_bf(c(0.001, 0.01, 0.05, 0.1), 100, label=TRUE)
+#' p_to_bf(c(0.001, 0.01, 0.05, 0.1), 1000, label=TRUE)
+#'
+#' @export
+p_to_bf = function(p, n, log=FALSE, label=FALSE) {
+  # if(p <= 0.1) {
+  #   logBF = log(3 * p * sqrt(n))
+  # } else if(p <= 0.5) {
+  #   # BF = (4 / 3) * p ^ (2 / 3) * sqrt(n)
+  #   logBF = log(p) * (2 / 3) + log(sqrt(n) * (4 / 3))
+  # } else {
+  #   # BF = p ^ (1 / 4) * sqrt(n)
+  #   logBF = log(p) / 4 + log(sqrt(n))
+  # }
+  logBF =
+    ifelse(
+      p <= 0.1,
+      log(3 * p * sqrt(n)),
+      ifelse(
+        p <= 0.5,
+        log(p) * (2 / 3) + log(sqrt(n) * (4 / 3)),
+        log(p) / 4 + log(sqrt(n))
+      )
+    ) * -1  # log(BF10)
+  if(label)
+    names(logBF) = paste0("(p = ", p, ", n = ", n, ")")
+  if(log)
+    return(logBF)
+  else
+    return(exp(logBF))
+}
+
+
 p.trans = function(p, digits.p=3, p.min=1e-99) {
   ifelse(
     is.na(p) | p > 1 | p < 0,
@@ -249,17 +322,40 @@ p_to_sig = function(p) {
 }
 
 
-r_to_sig = function(r, n) {
-  p = p.t(r/sqrt((1-r^2)/(n-2)), n-2)
-  p_to_sig(p)
+p.t = function(t, df) {
+  pt(abs(t), df, lower.tail=FALSE) * 2
 }
 
 
-p.t = function(t, df) pt(abs(t), df, lower.tail=FALSE) * 2
+r_to_p = function(r, df) {
+  p.t(r/sqrt((1-r^2)/df), df)
+}
 
 
 formula_paste = function(formula) {
   paste(formula[2], formula[1], formula[3], collapse=" ")
+}
+
+
+file_insert_name = function(file, name) {
+  file = strsplit(file, "/")[[1]]
+  file[length(file)] = paste0(
+    file_ext(file[length(file)], "txt"),
+    name,
+    file_ext(file[length(file)], "ext")
+  )
+  file = paste(file, collapse="/")
+  return(file)
+}
+
+
+file_ext = function(file, return=c("ext", "txt")) {
+  return = match.arg(return)
+  pos = regexpr("\\.([[:alnum:]]+)$", file)
+  if(return=="ext")
+    return(ifelse(pos > -1L, tolower(substring(file, pos)), ""))
+  if(return=="txt")
+    return(substring(file, 1L, last=pos-1L))
 }
 
 
@@ -300,32 +396,43 @@ NULL
 
 #' The Directed Prediction Index (DPI).
 #'
-#' The Directed Prediction Index (DPI) is a quasi-causal inference method for cross-sectional data designed to quantify the *relative endogeneity* (relative dependence) of outcome (*Y*) vs. predictor (*X*) variables in regression models. By comparing the proportion of variance explained (*R*-squared) between the *Y*-as-outcome model and the *X*-as-outcome model while controlling for a sufficient number of possible confounders, it suggests a plausible (admissible) direction of influence from a more exogenous variable (*X*) to a more endogenous variable (*Y*). Methodological details are provided at <https://psychbruce.github.io/DPI/>.
+#' The Directed Prediction Index (DPI) is a quasi-causal inference method for cross-sectional data designed to quantify the *relative endogeneity* (relative dependence) of outcome (*Y*) vs. predictor (*X*) variables in regression models. By comparing the proportion of variance explained (*R*-squared) between the *Y*-as-outcome model and the *X*-as-outcome model while controlling for a sufficient number of possible confounders, it can suggest a plausible (admissible) direction of influence from a more exogenous variable (*X*) to a more endogenous variable (*Y*). Methodological details are provided at <https://psychbruce.github.io/DPI/>.
 #'
 #' @param model Model object (`lm`).
-#' @param y Dependent (outcome) variable.
 #' @param x Independent (predictor) variable.
+#' @param y Dependent (outcome) variable.
 #' @param data \[Optional\] Defaults to `NULL`. If `data` is specified, then `model` will be ignored and a linear model `lm({y} ~ {x} + .)` will be fitted inside. This is helpful for exploring all variables in a dataset.
 #' @param k.cov Number of random covariates (simulating potential omitted variables) added to each simulation sample.
 #'
 #' - Defaults to `1`. Please also test different `k.cov` values as robustness checks (see [DPI_curve()]).
-#' - If `k.cov > 0`, the raw data (without bootstrapping) are used, with `k.cov` random variables appended, for simulation.
-#' - If `k.cov = 0` (not suggested), bootstrap samples (resampling with replacement) are used for simulation.
+#' - If `k.cov` > 0, the raw data (without bootstrapping) are used, with `k.cov` random variables appended, for simulation.
+#' - If `k.cov` = 0 (not suggested), bootstrap samples (resampling with replacement) are used for simulation.
 #' @param n.sim Number of simulation samples. Defaults to `1000`.
-#' @param alpha Significance level for computing the `Strength` score (0~1) based on *p* value of partial correlation between `X` and `Y`. Defaults to `0.05`.
+#' @param alpha Significance level for computing the `Significance` score (0~1) based on *p* value of partial correlation between `X` and `Y`. Defaults to `0.05`.
 #' - `Direction = R2.Y - R2.X`
-#' - `Strength = 1 - tanh(p.beta.xy/alpha/2)`
+#' - `Significance = 1 - tanh(p.beta.xy/alpha/2)`
+#' @param bonf Bonferroni correction to control for false positive rates: `alpha` is divided by, and *p* values are multiplied by, the number of comparisons.
+#' - Defaults to `FALSE`: No correction, suitable if you plan to test only one pair of variables.
+#' - `TRUE`: Using `k * (k - 1) / 2` (number of all combinations of variable pairs) where `k = length(data)`.
+#' - A user-specified number of comparisons.
+#' @param pseudoBF Use normalized pseudo Bayes Factors `sigmoid(log(PseudoBF10))` alternatively as the `Significance` score (0~1). Pseudo Bayes Factors are computed from *p* value of X-Y partial relationship and total sample size, using the transformation rules proposed by Wagenmakers (2022) \doi{10.31234/osf.io/egydq}.
+#'
+#' Defaults to `FALSE` because it makes less penalties for insignificant partial relationships between `X` and `Y`, see Examples in [DPI()] and [online documentation](https://psychbruce.github.io/DPI/#step-2-normalized-penalty-as-significance-score).
 #' @param seed Random seed for replicable results. Defaults to `NULL`.
-#' @param progress Show progress bar. Defaults to `FALSE` (if `n.sim < 5000`).
+#' @param progress Show progress bar. Defaults to `FALSE` (if `n.sim` < 5000).
 #' @param file File name of saved plot (`".png"` or `".pdf"`).
 #' @param width,height Width and height (in inches) of saved plot. Defaults to `6` and `4`.
 #' @param dpi Dots per inch (figure resolution). Defaults to `500`.
 #'
 #' @return
 #' Return a data.frame of simulation results:
-#' - `DPI`
-#'   - `= Direction * Strength`
+#' - `DPI = Direction * Significance`
 #'   - `= (R2.Y - R2.X) * (1 - tanh(p.beta.xy/alpha/2))`
+#'     - if `pseudoBF=FALSE` (default, suggested)
+#'     - more conservative estimates
+#'   - `= (R2.Y - R2.X) * plogis(log(pseudo.BF.xy))`
+#'     - if `pseudoBF=TRUE`
+#'     - less conservative for insignificant X-Y relationship
 #' - `delta.R2`
 #'   - `R2.Y - R2.X`
 #' - `R2.Y`
@@ -340,35 +447,57 @@ NULL
 #'   - residual degree of freedom (df) of `t.beta.xy`
 #' - `r.partial.xy`
 #'   - partial correlation (always with the same *t* value as `t.beta.xy`) between X and Y when controlling for all other covariates
+#' - `sigmoid.p.xy`
+#'   - sigmoid *p* value as `1 - tanh(p.beta.xy/alpha/2)`
+#' - `pseudo.BF.xy`
+#'   - pseudo Bayes Factors (\eqn{BF_{10}}) computed from *p* value `p.beta.xy` and sample size `nobs(model)`, see [p_to_bf()]
 #'
 #' @seealso
 #' [S3method.dpi]
 #'
 #' [DPI_curve()]
 #'
-#' [cor_network()]
+#' [DPI_dag()]
 #'
-#' [dag_network()]
+#' [BNs_dag()]
+#'
+#' [cor_net()]
+#'
+#' [p_to_bf()]
 #'
 #' @examples
 #' \donttest{# input a fitted model
 #' model = lm(Ozone ~ ., data=airquality)
-#' DPI(model, y="Ozone", x="Solar.R", seed=1)  # DPI > 0
-#' DPI(model, y="Ozone", x="Wind", seed=1)     # DPI > 0
-#' DPI(model, y="Wind", x="Solar.R", seed=1)   # unrelated
+#' DPI(model, x="Solar.R", y="Ozone", seed=1)  # DPI > 0
+#' DPI(model, x="Wind", y="Ozone", seed=1)     # DPI > 0
+#' DPI(model, x="Solar.R", y="Wind", seed=1)   # unrelated
 #'
-#' # input raw data, test with more random covs
-#' DPI(data=airquality, y="Ozone", x="Solar.R", k.cov=10, seed=1)
-#' DPI(data=airquality, y="Ozone", x="Wind", k.cov=10, seed=1)
-#' DPI(data=airquality, y="Wind", x="Solar.R", k.cov=10, seed=1)
+#' # or input raw data, test with more random covs
+#' DPI(data=airquality, x="Solar.R", y="Ozone",
+#'     k.cov=10, seed=1)
+#' DPI(data=airquality, x="Wind", y="Ozone",
+#'     k.cov=10, seed=1)
+#' DPI(data=airquality, x="Solar.R", y="Wind",
+#'     k.cov=10, seed=1)
+#'
+#' # or use pseudo Bayes Factors for the significance score
+#' # (less conservative for insignificant X-Y relationship)
+#' DPI(data=airquality, x="Solar.R", y="Ozone", k.cov=10,
+#'     pseudoBF=TRUE, seed=1)  # DPI > 0 (true positive)
+#' DPI(data=airquality, x="Wind", y="Ozone", k.cov=10,
+#'     pseudoBF=TRUE, seed=1)  # DPI > 0 (true positive)
+#' DPI(data=airquality, x="Solar.R", y="Wind", k.cov=10,
+#'     pseudoBF=TRUE, seed=1)  # DPI > 0 (false positive!)
 #' }
 #' @export
 DPI = function(
-    model, y, x,
+    model, x, y,
     data = NULL,
     k.cov = 1,
     n.sim = 1000,
     alpha = 0.05,
+    bonf = FALSE,
+    pseudoBF = FALSE,
     seed = NULL,
     progress,
     file = NULL,
@@ -382,23 +511,34 @@ DPI = function(
     else
       progress = TRUE
   }
+
   formula.y = glue("{y} ~ {x} + .")
   formula.x = glue("{x} ~ {y} + .")
+
   if(is.null(data)) {
     data = model.frame(model)  # new data.frame (na.omit)
     model = lm(formula.y, data=data)  # refit
   } else {
+    data = as_numeric(data)
     model = lm(formula.y, data=data)
     data = model.frame(model)  # new data.frame (na.omit)
   }
+
+  nobs = nobs(model)
   formula = formula(model)
   formula.y = update(formula, glue("{y} ~ {x} + . - {y}"))
   formula.x = update(formula, glue("{x} ~ {y} + . - {x}"))
-  for(var in names(data)) {
-    if(inherits(data[[var]], c("numeric", "integer", "double", "logical")) |
-       (inherits(data[[var]], "factor") & nlevels(data[[var]])==2))
-      data[[var]] = as.numeric(scale(as.numeric(data[[var]])))
+
+  k = length(data)
+  if(is.logical(bonf)) {
+    if(bonf)
+      bonf = k * (k - 1) / 2  # all combinations
+    else
+      bonf = 1
   }
+  bonf = as.integer(bonf)
+  alpha = alpha / bonf
+
   op = options()
   options(cli.progress_bar_style="bar")
   cli::cli_progress_bar(
@@ -413,6 +553,7 @@ DPI = function(
       "{cli::col_green(cli::symbol$tick)}",
       "{cli::pb_total} simulation samples estimated in {cli::pb_elapsed}")
   )
+
   if(!is.null(seed)) {
     set.seed(seed)
     seeds = sample(seq_len(10^8), n.sim)
@@ -448,7 +589,7 @@ DPI = function(
     t.xy = coef(summ1)[2, "t value"]
     p.xy = coef(summ1)[2, "Pr(>|t|)"]
     df = df.residual(model1)
-    rp.xy = t.xy / sqrt(t.xy^2 + df)  # partial r_xy
+    rp.xy = t.xy / sqrt(t.xy^2 + df)  # partial r.xy
     ## X ~ Y
     model2 = update(model, formula=glue(
       "{x} ~ {y} + . {covs} - {x}"
@@ -458,23 +599,25 @@ DPI = function(
     ## Return results from one random sample
     dpi = data.frame(
       # DPI = t.xy^2 * (R2.Y - R2.X),
-      DPI = (R2.Y - R2.X) * (1 - tanh(p.xy/alpha/2)),
-      # using plogis: 2 * (1 - plogis(p, scale=alpha))
-      # using sigmoid: 2 * ( 1 - 1 / (1 + exp(-p/alpha)) )
+      DPI = ifelse(
+        pseudoBF == FALSE,
+        (R2.Y - R2.X) * (1 - tanh(p.xy/alpha/2)),
+        (R2.Y - R2.X) * plogis(p_to_bf(p.xy, nobs, log=TRUE))
+        ),
       # plogis(): logistic distribution function, "inverse logit"
       #   - plogis() is also a rescaled hyperbolic tangent:
       #       plogis(x) = sigmoid(x) = 1 / (1 + exp(-x))
       #         = (1 + tanh(x/2)) / 2
       #       plogis(x, scale) = (1 + tanh(x/scale/2)) / 2
-      # p = seq(0, 1, 0.01)
-      # plot(p, 1 - tanh(p/0.05))
       delta.R2 = R2.Y - R2.X,
       R2.Y,
       R2.X,
       t.beta.xy = t.xy,
       p.beta.xy = p.xy,
       df.beta.xy = df,
-      r.partial.xy = rp.xy
+      r.partial.xy = rp.xy,
+      sigmoid.p.xy = 1 - tanh(p.xy/alpha/2),
+      pseudo.BF.xy = p_to_bf(p.xy, nobs)
     )
     if(progress)
       cli::cli_progress_update(.envir=parent.frame(2))
@@ -485,14 +628,17 @@ DPI = function(
   gc()
   dpi = do.call("rbind", dpi)
   class(dpi) = c("dpi", "data.frame")
-  attr(dpi, "N.valid") = nrow(data)
+  attr(dpi, "N.valid") = nobs
+  attr(dpi, "df") = dpi$df.beta.xy[1]
   attr(dpi, "formula.y") = formula.y
   attr(dpi, "formula.x") = formula.x
   attr(dpi, "X") = x
   attr(dpi, "Y") = y
   attr(dpi, "k.cov") = k.cov
   attr(dpi, "n.sim") = n.sim
-  attr(dpi, "df") = dpi$df.beta.xy[1]
+  attr(dpi, "alpha") = alpha
+  attr(dpi, "bonferroni") = bonf
+  attr(dpi, "pseudoBF") = pseudoBF
   attr(dpi, "seed") = ifelse(is.null(seed), "NULL", seed)
   attr(dpi, "plot.params") = list(file = file,
                                   width = width,
@@ -505,23 +651,21 @@ DPI = function(
 #' @rdname S3method.dpi
 #' @export
 summary.dpi = function(object, ...) {
+  ## Hyperparameters
+  alpha = attr(object, "alpha")
+  bonf = attr(object, "bonferroni")
+
   ## DPI
   dpi = object$DPI
+  n.obs = attr(object, "N.valid")
+  n.sim = length(dpi)
   mean = mean(dpi, na.rm=TRUE)
   se = sd(dpi, na.rm=TRUE)
   z = mean / se
-  p.z = pnorm(abs(z), lower.tail=FALSE) * 2
+  if(is.nan(z)) z = 0  # all values are 0 -> z = NaN
+  p.z = min(1, pnorm(abs(z), lower.tail=FALSE) * 2 * bonf)
   # CIs = quantile(dpi, probs=c(0.025, 0.975), na.rm=TRUE)
-  CIs = mean + qnorm(c(0.025, 0.975)) * se
-
-  ## Delta R^2
-  delta.R2 = object$delta.R2
-  dR2.mean = mean(delta.R2, na.rm=TRUE)
-  dR2.se = sd(delta.R2, na.rm=TRUE)
-  dR2.z = dR2.mean / dR2.se
-  dR2.p.z = pnorm(abs(dR2.z), lower.tail=FALSE) * 2
-  # dR2.CIs = quantile(delta.R2, probs=c(0.025, 0.975), na.rm=TRUE)
-  dR2.CIs = dR2.mean + qnorm(c(0.025, 0.975)) * dR2.se
+  CIs = mean + qnorm(c(alpha/2, 1-alpha/2)) * se
 
   ## partial r & t test (test with raw sample size!)
   r.partial = mean(object$r.partial.xy, na.rm=TRUE)
@@ -538,16 +682,8 @@ summary.dpi = function(object, ...) {
       p.z = p.z,
       Sim.LLCI = CIs[1],
       Sim.ULCI = CIs[2],
+      log.PseudoBF10 = p_to_bf(p.z, n.obs, log=TRUE),
       row.names = "DPI"
-    ),
-    dR2.summ = data.frame(
-      Estimate = dR2.mean,
-      Sim.SE = dR2.se,
-      z.value = dR2.z,
-      p.z = dR2.p.z,
-      Sim.LLCI = dR2.CIs[1],
-      Sim.ULCI = dR2.CIs[2],
-      row.names = "Delta.R2"
     ),
     r.partial.summ = data.frame(
       Estimate = r.partial,
@@ -559,6 +695,7 @@ summary.dpi = function(object, ...) {
     dpi = object
   )
   class(dpi.summ) = "summary.dpi"
+  attr(dpi.summ, "pseudoBF") = attr(object, "pseudoBF")
   return(dpi.summ)
 }
 
@@ -567,6 +704,9 @@ summary.dpi = function(object, ...) {
 #' @export
 print.summary.dpi = function(x, digits=3, ...) {
   fmt = paste0("%.", digits, "f")
+  pseudoBF = attr(x, "pseudoBF")
+  sig.method = ifelse(pseudoBF, "Sigmoid(log(PseudoBF10.xy))",
+                      "Sigmoid(p/alpha) = 1 - tanh(p.xy/alpha/2)")
   dpi = x$dpi.summ
   res.dpi = data.frame(
     Estimate = sprintf(fmt, dpi$Estimate),
@@ -578,6 +718,7 @@ print.summary.dpi = function(x, digits=3, ...) {
       "[", sprintf(fmt, dpi$Sim.LLCI),
       ", ", sprintf(fmt, dpi$Sim.ULCI),
       "]"),
+    log.PseudoBF10 = sprintf(fmt, dpi$log.PseudoBF10),
     row.names = "DPI"
   )
 
@@ -595,14 +736,25 @@ print.summary.dpi = function(x, digits=3, ...) {
     "{.val {attr(x$dpi, 'X')}} (X) -> {.val {attr(x$dpi, 'Y')}} (Y)")
   cli::cli_text(
     cli::col_cyan("Partial correlation: "),
-    "r(partial).XY = {cli::col_green({sprintf(fmt, x$r.partial.summ$Estimate)})},
-     p = {cli::col_green({p.trans(x$r.partial.summ$p.t, 4)})}
-     {cli::col_green({sig.trans(x$r.partial.summ$p.t)})}")
+    "r.partial = {cli::col_yellow({sprintf(fmt, x$r.partial.summ$Estimate)})},
+     p = {cli::col_yellow({p.trans(x$r.partial.summ$p.t, 4)})}
+     {cli::col_yellow({sig.trans(x$r.partial.summ$p.t)})}
+     (PseudoBF10 =
+     {cli::col_yellow({
+       sprintf(fmt, p_to_bf(x$r.partial.summ$p.t, attr(x$dpi, 'N.valid')))
+     })})")
   cli::cli_text(
-    cli::col_cyan("Simulation sample settings: "),
+    cli::col_cyan("Significance score method: "),
+    "{cli::col_yellow({sig.method})}")
+  cli::cli_text(
+    cli::col_cyan("Simulation sample setting: "),
     "k.random.covs = {cli::col_magenta({attr(x$dpi, 'k.cov')})},
      n.sim = {cli::col_magenta({attr(x$dpi, 'n.sim')})},
      seed = {cli::col_magenta({attr(x$dpi, 'seed')})}")
+  cli::cli_text(
+    cli::col_cyan("False positive rates (FPR) control: "),
+    "Alpha = {cli::col_magenta({format(attr(x$dpi, 'alpha'), digits=digits)})}
+     (Bonferroni correction = {cli::col_magenta({attr(x$dpi, 'bonferroni')})})")
   print(res.dpi)
   invisible(NULL)
 }
@@ -616,7 +768,9 @@ plot.dpi = function(x, file=NULL, width=6, height=4, dpi=500, ...) {
   x.summ = summary(x)
   summ = x.summ$dpi.summ
   summ.r = x.summ$r.partial.summ
-  r.sig = summ.r$p.t < 0.05
+  false.pos = summ$p.z < 0.05 & summ.r$p.t >= 0.05
+  bonf = attr(x, "bonferroni")
+  pseudoBF = attr(x, "pseudoBF")
   if(is.null(file)) {
     plot.params = attr(x, "plot.params")
     file = plot.params$file
@@ -625,22 +779,37 @@ plot.dpi = function(x, file=NULL, width=6, height=4, dpi=500, ...) {
     dpi = plot.params$dpi
   }
 
-  expr.x = eval(parse(text=glue("
-    expression(
-      paste(
-        'Directed Prediction Index: ',
-        DPI[X %->% Y] == (italic(R)[italic(Y)]^2 - italic(R)[italic(X)]^2) %.% (1 - plain(tanh) * frac(italic(p)[paste(italic(XY), '|', italic(Covs))], 2 * alpha))
+  if(pseudoBF==FALSE) {
+    expr.x = eval(parse(text=glue("
+      expression(
+        paste(
+          'Directed Prediction Index: ',
+          DPI[X %->% Y] == (italic(R)[italic(Y)]^2 - italic(R)[italic(X)]^2) %.% (1 - plain(tanh) * frac(italic(p)[paste(italic(XY), '|', italic(Covs))], 2 * alpha))
+        )
       )
-    )
-  ")), envir=parent.frame())
+    ")), envir=parent.frame())
+  } else {
+    expr.x = eval(parse(text=glue("
+      expression(
+        paste(
+          'Directed Prediction Index: ',
+          DPI[X %->% Y] == (italic(R)[italic(Y)]^2 - italic(R)[italic(X)]^2) %.% sigmoid(log(italic(BF)[10]^paste(italic(XY), '|', italic(Covs))))
+        )
+      )
+    ")), envir=parent.frame())
+  }
+
 
   expr.title = eval(parse(text=glue("
     expression(
       paste(
-        'Histogram of DPI (',
+        DPI[{attr(x, 'X')} %->% {attr(x, 'Y')}],
+        ' (',
         italic(k)[random.covs] == {attr(x, 'k.cov')},
         ', ',
         italic(n)[sim.samples] == {attr(x, 'n.sim')},
+        ', ',
+        seed == {attr(x, 'seed')},
         ')'
       )
     )
@@ -649,13 +818,16 @@ plot.dpi = function(x, file=NULL, width=6, height=4, dpi=500, ...) {
   expr.subtitle = eval(parse(text=glue("
     expression(
       paste(
-        bar(DPI)[{attr(x, 'X')} %->% {attr(x, 'Y')}],
-        ' = {sprintf('%.3f', summ$Estimate)}, ',
-        italic(p)[italic(z)],
+        bar(DPI), ' = {sprintf('%.3f', summ$Estimate)}, ',
+        {ifelse(bonf==1, \"italic(p)[italic(z)]\",
+                paste0(\"italic(p)[italic(z)]^'Bonf=\", bonf, \"'\"))},
         ' = {p.trans(summ$p.z)}, ',
-        CI['95%'],
+        {ifelse(bonf==1, \"CI['95%']\",
+                paste0(\"CI['95%']^'Bonf=\", bonf, \"'\"))},
         ' = [{sprintf('%.3f', summ$Sim.LLCI)}',
-        ', {sprintf('%.3f', summ$Sim.ULCI)}]'
+        ', {sprintf('%.3f', summ$Sim.ULCI)}]',
+        ', ', logBF[10]^'pseudo',
+        ' = {sprintf('%.3f', summ$log.PseudoBF10)}'
       )
     )
   ")), envir=parent.frame())
@@ -681,25 +853,30 @@ plot.dpi = function(x, file=NULL, width=6, height=4, dpi=500, ...) {
     geom_density(
       aes(y=after_stat(scaled)), adjust=2,  # default: adjust=1
       linewidth=0.6, color=color, fill=color, alpha=0.2) +
-    geom_vline(xintercept=0, color="darkred", linetype="dashed") +
+    geom_vline(xintercept=0, color="firebrick", linetype="dashed") +
     geom_errorbarh(aes(xmin=summ$Sim.LLCI,
                        xmax=summ$Sim.ULCI,
                        y=1.03),
-                   width=0.04) +
+                   width=0.04,
+                   color=ifelse(false.pos, "red", "black")) +
     # ggplot2 update: `height` was translated to `width`.
     annotate("point", x=summ$Estimate, y=1.03, shape=18, size=3,
-             color=ifelse(r.sig, "black", "grey")) +
+             color=ifelse(false.pos, "red", "black")) +
+    annotate("text", x=summ$Estimate, y=0.95, color="red",
+             label=ifelse(false.pos, "insignificant correlation!", "")) +
     labs(x=expr.x,
          y="Density (Scaled)",
          title=expr.title,
          subtitle=expr.subtitle,
          caption=expr.caption) +
     theme_classic() +
-    theme(plot.subtitle=element_text(color=color),
-          plot.caption=element_text(color="darkred"),
-          axis.text=element_text(color="black"),
-          axis.line=element_line(color="black"),
-          axis.ticks=element_line(color="black"))
+    theme(
+      plot.subtitle=element_text(
+        color=color, margin=margin(b=0.5, unit="lines")),
+      plot.caption=element_text(color="firebrick"),
+      axis.text=element_text(color="black"),
+      axis.line=element_line(color="black"),
+      axis.ticks=element_line(color="black"))
 
   if(!is.null(file)) {
     ggsave(p, filename=file, width=width, height=height, dpi=dpi)
@@ -718,14 +895,11 @@ print.dpi = function(x, digits=3, ...) {
 }
 
 
-#' The DPI curve analysis.
+#' DPI curve analysis across multiple random covariates.
 #'
 #' @inheritParams DPI
-#' @param k.covs An integer vector of number of random covariates
-#' (simulating potential omitted variables)
-#' added to each simulation sample.
-#' Defaults to `1:10` (producing DPI results for `k.cov`=1~10).
-#' For details, see [DPI()].
+#' @param k.covs An integer vector of number of random covariates (simulating potential omitted variables) added to each simulation sample. Defaults to `1:10` (producing DPI results for `k.cov`=1~10). For details, see [DPI()].
+#' @param progress Show progress bar. Defaults to `TRUE` (if `length(k.covs)` >= 5).
 #'
 #' @return
 #' Return a data.frame of DPI curve results.
@@ -735,28 +909,41 @@ print.dpi = function(x, digits=3, ...) {
 #'
 #' [DPI()]
 #'
-#' [cor_network()]
+#' [DPI_dag()]
 #'
-#' [dag_network()]
+#' [BNs_dag()]
+#'
+#' [cor_net()]
+#'
+#' [p_to_bf()]
 #'
 #' @examples
 #' \donttest{model = lm(Ozone ~ ., data=airquality)
-#' DPIs = DPI_curve(model, y="Ozone", x="Solar.R", seed=1)
+#' DPIs = DPI_curve(model, x="Solar.R", y="Ozone", seed=1)
 #' plot(DPIs)  # ggplot object
 #' }
 #' @export
 DPI_curve = function(
-    model, y, x,
+    model, x, y,
     data = NULL,
     k.covs = 1:10,
     n.sim = 1000,
     alpha = 0.05,
+    bonf = FALSE,
+    pseudoBF = FALSE,
     seed = NULL,
+    progress,
     file = NULL,
     width = 6,
     height = 4,
     dpi = 500
 ) {
+  if(missing(progress)) {
+    if(length(k.covs) < 5)
+      progress = FALSE
+    else
+      progress = TRUE
+  }
   op = options()
   options(cli.progress_bar_style="bar")
   cli::cli_progress_bar(
@@ -774,20 +961,14 @@ DPI_curve = function(
   )
   dpi.curve = lapply(k.covs, function(k.cov) {
     dpi = DPI(model, y, x, data,
-              k.cov, n.sim, alpha,
+              k.cov, n.sim,
+              alpha, bonf, pseudoBF,
               seed, progress=FALSE)
-    # CIs.99 = quantile(dpi$DPI, probs=c(0.005, 0.995), na.rm=TRUE)
-    mean = mean(dpi$DPI, na.rm=TRUE)
-    se = sd(dpi$DPI, na.rm=TRUE)
-    CIs.99 = mean + qnorm(c(0.005, 0.995)) * se
-    dpi.summ = cbind(
-      data.frame(k.cov),
-      summary(dpi)[["dpi.summ"]],
-      data.frame(Sim.LLCI.99 = CIs.99[1],
-                 Sim.ULCI.99 = CIs.99[2])
-    )
+    dpi.summ = cbind(data.frame(k.cov), summary(dpi)[["dpi.summ"]])
     row.names(dpi.summ) = k.cov
-    cli::cli_progress_update(.envir=parent.frame(2))
+    attr(dpi.summ, "bonferroni") = attr(dpi, "bonferroni")
+    if(progress)
+      cli::cli_progress_update(.envir=parent.frame(2))
     return(dpi.summ)
   })
   cli::cli_progress_done()
@@ -812,6 +993,9 @@ DPI_curve = function(
 plot.dpi.curve = function(x, file=NULL, width=6, height=4, dpi=500, ...) {
   k.cov = Estimate = Sim.LLCI = Sim.ULCI = Sim.LLCI.99 = Sim.ULCI.99 = NULL
   color = "#2B579A"
+
+  bonf = attr(x, "bonferroni")
+
   if(is.null(file)) {
     plot.params = attr(x, "plot.params")
     file = plot.params$file
@@ -819,37 +1003,28 @@ plot.dpi.curve = function(x, file=NULL, width=6, height=4, dpi=500, ...) {
     height = plot.params$height
     dpi = plot.params$dpi
   }
-  # dp = rbind(
-  #   data.frame(
-  #     k.cov = 0,
-  #     Estimate = lm(Estimate ~ k.cov, x)$coefficients[1],
-  #     Sim.LLCI = lm(Sim.LLCI ~ k.cov, x)$coefficients[1],
-  #     Sim.ULCI = lm(Sim.ULCI ~ k.cov, x)$coefficients[1]
-  #   ),
-  #   x[c("k.cov", "Estimate", "Sim.LLCI", "Sim.ULCI")]
-  # )
+
   expr.subtitle = eval(parse(text=glue("
     expression(
       paste(
         bar(DPI)[{attr(x, 'X')} %->% {attr(x, 'Y')}],
         ' with ',
-        CI['95%'],
-        ' (dashed) and ',
-        CI['99%'],
-        ' (dotted)'
+        {ifelse(bonf==1, \"CI['95%']\",
+                paste0(\"CI['95%']^'Bonf=\", bonf, \"'\"))}
       )
     )
   ")), envir=parent.frame())
+
   p = ggplot(x, aes(x=k.cov, y=Estimate)) +
-    geom_ribbon(aes(ymin=Sim.LLCI.99, ymax=Sim.ULCI.99),
-                color=color, fill=color, alpha=0.1,
-                linetype="dotted") +
+    # geom_ribbon(aes(ymin=Sim.LLCI.99, ymax=Sim.ULCI.99),
+    #             color=color, fill=color, alpha=0.1,
+    #             linetype="dotted") +
     geom_ribbon(aes(ymin=Sim.LLCI, ymax=Sim.ULCI),
-                color=color, fill=color, alpha=0.15,
+                color=color, fill=color, alpha=0.2,
                 linetype="dashed") +
     geom_line(linewidth=1, color=color) +
     geom_point(color=color, size=2) +
-    geom_hline(yintercept=0, color="darkred", linetype="dashed") +
+    geom_hline(yintercept=0, color="firebrick", linetype="dashed") +
     scale_x_continuous(breaks=x$k.cov) +
     labs(
       x=paste0(
@@ -874,30 +1049,28 @@ plot.dpi.curve = function(x, file=NULL, width=6, height=4, dpi=500, ...) {
 }
 
 
-
 #### Network ####
 
 
-#' \[S3 methods\] for [cor_network()] and [dag_network()].
+#' \[S3 methods\] for [cor_net()], [BNs_dag()], and [DPI_dag()].
 #'
-#' \describe{
-#'   \item{`print(cor.net)`}{
-#'     Plot (partial) correlation network results.
-#'   }
-#'   \item{`print(dag.net)`}{
-#'     Plot Bayesian network (DAG) results.
-#'   }
-#' }
+#' - Transform `qgraph` into `ggplot`
+#'   - `plot(cor.net)`
+#'   - `plot(bns.dag)`
+#'   - `plot(dpi.dag)`
+#' - Plot network results
+#'   - `print(cor.net)`
+#'   - `print(bns.dag)`
+#'   - `print(dpi.dag)`
 #' @keywords internal
 #' @name S3method.network
-#' @inheritParams cor_network
-#' @inheritParams dag_network
-#' @param x Object (class `cor.net` or `dag.net`) returned from [cor_network()] or [dag_network()].
-#' @param algorithm \[For `dag.net`\] Algorithm(s) to display.
-#' Defaults to plot the final integrated DAG from BN results for each algorithm in `x`.
+#' @inheritParams cor_net
+#' @inheritParams BNs_dag
+#' @param x Object (class `cor.net` / `bns.dag` / `dpi.dag`) returned from [cor_net()] / [BNs_dag()] / [DPI_dag()].
+#' @param scale Scale the [`grob`][cowplot::draw_grob] object of `qgraph` on the `ggplot` canvas. Defaults to `1.2`.
 #' @param ... Other arguments (currently not used).
 #' @return
-#' Invisibly return a [`grob`][cowplot::as_grob] object ("Grid Graphical Object", or a list of them) that can be further reused in [ggplot2::ggsave()] and [cowplot::plot_grid()].
+#' Return a `ggplot` object that can be further modified and used in [ggplot2::ggsave()] and [cowplot::plot_grid()].
 NULL
 
 
@@ -906,54 +1079,54 @@ NULL
 #' Correlation and partial correlation networks (also called Gaussian graphical models, GGMs).
 #'
 #' @param data Data.
-#' @param index Type of graph: `"cor"` (raw correlation network) or `"pcor"` (partial correlation network).
-#' Defaults to `"cor"`.
-#' @param show.value Show correlation coefficients and their significance on edges.
-#' Defaults to `TRUE`.
-#' @param show.insig Show edges with insignificant correlations (*p* > 0.05).
-#' Defaults to `FALSE`.
-#' To change significance level, please set `alpha` (defaults to `alpha=0.05`).
-#' @param show.cutoff Show cut-off values of correlations.
-#' Defaults to `FALSE`.
-#' @param faded Transparency of edges according to the effect size of correlation.
-#' Defaults to `FALSE`.
-#' @param node.text.size Scalar on the font size of node (variable) labels.
-#' Defaults to `1.2`.
+#' @param index Type of graph: `"cor"` (raw correlation network) or `"pcor"` (partial correlation network). Defaults to `"cor"`.
+#' @param show.label Show labels of correlation coefficients and their significance on edges. Defaults to `TRUE`.
+#' @param show.insig Show edges with insignificant correlations (*p* > 0.05). Defaults to `FALSE`. To change significance level, please set `alpha` (defaults to `alpha=0.05`).
+#' @param show.cutoff Show cut-off values of correlations. Defaults to `FALSE`.
+#' @param faded Transparency of edges according to the effect size of correlation. Defaults to `FALSE`.
+#' @param node.text.size Scalar on the font size of node (variable) labels. Defaults to `1.2`.
 #' @param node.group A list that indicates which nodes belong together, with each element of list as a vector of integers identifying the column numbers of variables that belong together.
 #' @param node.color A vector with a color for each element in `node.group`, or a color for each node.
 #' @param edge.color.pos Color for (significant) positive values. Defaults to `"#0571B0"` (blue in ColorBrewer's RdBu palette).
 #' @param edge.color.neg Color for (significant) negative values. Defaults to `"#CA0020"` (red in ColorBrewer's RdBu palette).
-#' @param edge.color.non Color for insignificant values. Defaults to `"#EEEEEEEE"` (transparent grey).
+#' @param edge.color.non Color for insignificant values. Defaults to `"#EEEEEEEE"` (faded light grey).
+#' @param edge.width.min Minimum value of edge strength to scale all edge widths. Defaults to `sig` (the threshold of significant values).
+#' @param edge.width.max Maximum value of edge strength to scale all edge widths. Defaults to `NULL` (for undirected correlation networks) and `1.5` (for directed acyclic networks to better display arrows).
 #' @param edge.label.mrg Margin of the background box around the edge label. Defaults to `0.01`.
-#' @param title Plot title.
 #' @param file File name of saved plot (`".png"` or `".pdf"`).
-#' @param width,height Width and height (in inches) of saved plot.
-#' Defaults to `6` and `4`.
+#' @param width,height Width and height (in inches) of saved plot. Defaults to `6` and `4`.
 #' @param dpi Dots per inch (figure resolution). Defaults to `500`.
 #' @param ... Arguments passed on to [`qgraph()`][qgraph::qgraph].
 #'
 #' @return
-#' Return a list (class `cor.net`) of (partial) correlation results and [`qgraph`][qgraph::qgraph] object with its [`grob`][cowplot::as_grob] (Grid Graphical Object).
+#' Return a list (class `cor.net`) of (partial) correlation results and [`qgraph`][qgraph::qgraph] object.
 #'
 #' @seealso
 #' [S3method.network]
 #'
-#' [dag_network()]
+#' [DPI_dag()]
+#'
+#' [BNs_dag()]
 #'
 #' @examples
-#' # correlation network
-#' cor_network(airquality)
-#' cor_network(airquality, show.insig=TRUE)
+#' \donttest{# correlation network
+#' cor_net(airquality)
+#' cor_net(airquality, show.insig=TRUE)
 #'
 #' # partial correlation network
-#' cor_network(airquality, "pcor")
-#' cor_network(airquality, "pcor", show.insig=TRUE)
+#' cor_net(airquality, "pcor")
+#' cor_net(airquality, "pcor", show.insig=TRUE)
 #'
+#' # modify ggplot attributes
+#' p = cor_net(airquality, "pcor")
+#' gg = plot(p)  # return a ggplot object
+#' gg + labs(title="Partial Correlation Network")
+#' }
 #' @export
-cor_network = function(
+cor_net = function(
     data,
     index = c("cor", "pcor"),
-    show.value = TRUE,
+    show.label = TRUE,
     show.insig = FALSE,
     show.cutoff = FALSE,
     faded = FALSE,
@@ -963,8 +1136,9 @@ cor_network = function(
     edge.color.pos = "#0571B0",
     edge.color.neg = "#CA0020",
     edge.color.non = "#EEEEEEEE",
+    edge.width.min = "sig",
+    edge.width.max = NULL,
     edge.label.mrg = 0.01,
-    title = NULL,
     file = NULL,
     width = 6,
     height = 4,
@@ -972,9 +1146,11 @@ cor_network = function(
     ...
 ) {
   index = match.arg(index)
-  data = na.omit(data)
+  data = as_numeric(na.omit(data))
   r = cor(data)
   n = nrow(data)
+  k = ncol(data)
+  df = n - k
 
   p0 = qgraph::qgraph(
     r,
@@ -996,7 +1172,8 @@ cor_network = function(
     r,
     sampleSize = n,
     cut = ifelse(show.insig, r.sig, 0),
-    minimum = ifelse(show.insig, 0, "sig"),
+    minimum = ifelse(show.insig, 0, edge.width.min),
+    maximum = edge.width.max,
 
     ## --- [graph] --- ##
     graph = index,
@@ -1004,7 +1181,6 @@ cor_network = function(
     shape = "circle",
     # maximum = max,
     details = show.cutoff,
-    title = title,
 
     ## --- [node] --- ##
     groups = node.group,
@@ -1020,7 +1196,7 @@ cor_network = function(
     posCol = edge.color.pos,
     negCol = edge.color.neg,
     fade = faded,
-    edge.labels = show.value,
+    edge.labels = show.label,
     edge.label.margin = edge.label.mrg,
 
     ## --- [plotting] --- ##
@@ -1032,18 +1208,20 @@ cor_network = function(
   vars.from = p[["Edgelist"]][["from"]]
   vars.to = p[["Edgelist"]][["to"]]
   cor.values = p[["Edgelist"]][["weight"]]
-  cor.sig = r_to_sig(cor.values, n)
+  cor.pval = r_to_p(cor.values, df)
+  cor.sig = p_to_sig(cor.pval)
   cor.labels = sprintf("%.2f", cor.values)
   cor.labels = paste0(gsub("-", "\u2013", cor.labels), cor.sig)
   cor = data.frame(var1 = vars[vars.from],
                    var2 = vars[vars.to],
                    cor = cor.values,
+                   pval = cor.pval,
                    sig = cor.sig)
   cor = data.frame(cor[order(cor$cor, decreasing=TRUE),],
                    row.names=NULL)
-  names(cor)[3] = index
+  names(cor)[3] = ifelse(index=="cor", "r", "r.partial")
 
-  if(show.value) {
+  if(show.label) {
     edge.label.bg = p[["graphAttributes"]][["Edges"]][["label.bg"]]
     edge.color = p[["graphAttributes"]][["Edges"]][["color"]]
     edge.label.bg[edge.color==edge.color.non] = NA
@@ -1051,10 +1229,7 @@ cor_network = function(
     p[["graphAttributes"]][["Edges"]][["label.bg"]] = edge.label.bg
   }
 
-  suppressWarnings({
-    grob = cowplot::as_grob(~plot(p))
-  })
-  cor.net = list(cor=cor, plot=grob, qgraph=p)
+  cor.net = list(cor=cor, qgraph=p)
   class(cor.net) = "cor.net"
   attr(cor.net, "plot.params") = list(file = file,
                                       width = width,
@@ -1066,8 +1241,18 @@ cor_network = function(
 
 #' @rdname S3method.network
 #' @export
+plot.cor.net = function(x, scale=1.2, ...) {
+  suppressWarnings({
+    grob = as_grob(~plot(x$qgraph))
+  })
+  ggplot() + draw_grob(grob, scale=scale)
+}
+
+
+#' @rdname S3method.network
+#' @export
 print.cor.net = function(
-    x, file=NULL, width=6, height=4, dpi=500, ...
+    x, scale=1.2, file=NULL, width=6, height=4, dpi=500, ...
 ) {
   if(is.null(file)) {
     plot.params = attr(x, "plot.params")
@@ -1077,15 +1262,13 @@ print.cor.net = function(
     dpi = plot.params$dpi
   }
 
-  suppressWarnings({
-    p = cowplot::as_grob(~plot(x$qgraph))
-  })
+  gg = plot(x, scale)
 
-  index = names(x$cor)[3]  # "cor" or "pcor"
-  if(index=="cor") {
+  index = names(x$cor)[3]  # "r" or "r.partial"
+  if(index=="r") {
     algo.text = "Correlation Network"
     file.index = "_COR.NET_correlation.network"
-  } else if(index=="pcor") {
+  } else if(index=="r.partial") {
     algo.text = "Partial Correlation Network"
     file.index = "_COR.NET_partial.cor.network"
   } else {
@@ -1095,15 +1278,15 @@ print.cor.net = function(
   cli::cli_text("Displaying {.pkg {algo.text}}")
 
   if(is.null(file)) {
-    plot(x$qgraph)
-    # cowplot::ggdraw(p)  # slower
+    # plot(x$qgraph)  # faster
+    print(gg)  # slower
   } else {
     file = file_insert_name(file, file.index)
-    ggsave(p, filename=file, width=width, height=height, dpi=dpi)
+    ggsave(gg, filename=file, width=width, height=height, dpi=dpi)
     cli::cli_alert_success("Plot saved to {.path {file}}")
   }
 
-  invisible(p)
+  invisible(gg)
 }
 
 
@@ -1111,10 +1294,9 @@ print.cor.net = function(
 #'
 #' Directed acyclic graphs (DAGs) via Bayesian networks (BNs). It uses [bnlearn::boot.strength()] to estimate the strength of each edge as its *empirical frequency* over a set of networks learned from bootstrap samples. It computes (1) the probability of each edge (modulo its direction) and (2) the probabilities of each edge's directions conditional on the edge being present in the graph (in either direction). Stability thresholds are usually set as `0.85` for *strength* (i.e., an edge appearing in more than 85% of BNs bootstrap samples) and `0.50` for *direction* (i.e., a direction appearing in more than 50% of BNs bootstrap samples) (Briganti et al., 2023). Finally, for each chosen algorithm, it returns the stable Bayesian network as the final DAG.
 #'
-#' @inheritParams cor_network
+#' @inheritParams cor_net
 #' @inheritParams DPI
-#' @param algorithm \link[bnlearn:structure-learning]{Structure learning algorithms} for building Bayesian networks (BNs). Should be function name(s) from the [`bnlearn`][bnlearn::bnlearn-package] package. Better to perform BNs with all three classes of algorithms
-#' to check the robustness of results (Briganti et al., 2023).
+#' @param algorithm \link[bnlearn:structure-learning]{Structure learning algorithms} for building Bayesian networks (BNs). Should be function name(s) from the [`bnlearn`][bnlearn::bnlearn-package] package. Better to perform BNs with all three classes of algorithms to check the robustness of results (Briganti et al., 2023).
 #'
 #' Defaults to the most common algorithms: `"pc.stable"` (PC), `"hc"` (HC), and `"rsmax2"` (RS), for the three classes, respectively.
 #'
@@ -1151,11 +1333,10 @@ print.cor.net = function(
 #' - Defaults to `0.50` (50%).
 #' - The proportions of two reverse directions add up to 100%.
 #' - Empirical frequency (?~100%) will be mapped onto edge *greyscale/transparency* in the final integrated `DAG`, with its value shown as edge text label.
-#' @param edge.width.max Maximum value of edge strength to scale all edge widths. Defaults to `1.5` for better display of arrow.
 #' @param verbose Print information about BN algorithm and number of bootstrap samples when running the analysis. Defaults to `TRUE`.
 #'
 #' @return
-#' Return a list (class `dag.net`) of Bayesian network results and [`qgraph`][qgraph::qgraph] object with its [`grob`][cowplot::as_grob] (Grid Graphical Object).
+#' Return a list (class `bns.dag`) of Bayesian network results and [`qgraph`][qgraph::qgraph] object.
 #'
 #' @references
 #' Briganti, G., Scutari, M., & McNally, R. J. (2023). A tutorial on Bayesian networks for psychopathology researchers. *Psychological Methods, 28*(4), 947--961. \doi{10.1037/met0000479}
@@ -1169,10 +1350,12 @@ print.cor.net = function(
 #' @seealso
 #' [S3method.network]
 #'
-#' [cor_network()]
+#' [DPI_dag()]
+#'
+#' [cor_net()]
 #'
 #' @examples
-#' \donttest{bn = dag_network(airquality, seed=1)
+#' \donttest{bn = BNs_dag(airquality, seed=1)
 #' bn
 #' # bn$pc.stable
 #' # bn$hc
@@ -1190,21 +1373,22 @@ print.cor.net = function(
 #'
 #' print(bn, file="airquality.png")
 #' # will save three plots with auto-modified file names:
-#' - "airquality_DAG.NET_BNs.01_pc.stable.png"
-#' - "airquality_DAG.NET_BNs.02_hc.png"
-#' - "airquality_DAG.NET_BNs.03_rsmax2.png"
+#' - "airquality_BNs.DAG.01_pc.stable.png"
+#' - "airquality_BNs.DAG.02_hc.png"
+#' - "airquality_BNs.DAG.03_rsmax2.png"
 #'
 #' # arrange multiple plots using aplot::plot_list()
 #' # install.packages("aplot")
-#' c1 = cor_network(airquality, "cor")
-#' c2 = cor_network(airquality, "pcor")
-#' bn = dag_network(airquality, seed=1)
+#' c1 = cor_net(airquality, "cor")
+#' c2 = cor_net(airquality, "pcor")
+#' bn = BNs_dag(airquality, seed=1)
+#' mytheme = theme(plot.title=element_text(hjust=0.5))
 #' p = aplot::plot_list(
-#'   c1$plot,
-#'   c2$plot,
-#'   bn$pc.stable$DAG$plot,
-#'   bn$hc$DAG$plot,
-#'   bn$rsmax2$DAG$plot,
+#'   plot(c1),
+#'   plot(c2),
+#'   plot(bn$pc.stable$DAG) + mytheme,
+#'   plot(bn$hc$DAG) + mytheme,
+#'   plot(bn$rsmax2$DAG) + mytheme,
 #'   design="111222
 #'           334455",
 #'   tag_levels="A"
@@ -1214,7 +1398,7 @@ print.cor.net = function(
 #' }
 #'
 #' @export
-dag_network = function(
+BNs_dag = function(
     data,
     algorithm = c("pc.stable", "hc", "rsmax2"),
     algorithm.args = list(),
@@ -1264,6 +1448,7 @@ dag_network = function(
     maxs = c(edge = 1,
              strength = edge.width.max,
              direction = 1)
+
     dags = lapply(types, function(type) {
       p = qgraph::qgraph(
         ## --- [data] --- ##
@@ -1275,8 +1460,6 @@ dag_network = function(
         ## --- [graph] --- ##
         layout = "spring",
         shape = "circle",
-        title = paste0("BN algorithm: \"", algo, "\"\n",
-                       "DAG value: ", type),
 
         ## --- [label] --- ##
         labels = vars,
@@ -1294,21 +1477,25 @@ dag_network = function(
         usePCH = TRUE,
         DoNotPlot = TRUE,
         ...)
+
       if(type!="edge") {
         # edge.values = p[["Edgelist"]][["weight"]]
         edge.labels = p[["graphAttributes"]][["Edges"]][["labels"]]
         edge.labels = paste0(100 * as.numeric(edge.labels), "%")
         p[["graphAttributes"]][["Edges"]][["labels"]] = edge.labels
       }
-      class(p) = c("dag.net", class(p))
-      attr(p, "algo") = algo
+
+      p$algo = algo
+      p$title = paste0(
+        "BN algorithm: \"", algo, "\" (DAG value: ", type, ")")
+      class(p) = c("bns.dag", class(p))
       return(p)
     })
     names(dags) = paste0("dag.", types)
     return(dags)
   })
 
-  dag.net = lapply(algorithm, function(algo) {
+  bns.dag = lapply(algorithm, function(algo) {
     bn = BNs[[algo]]
     dag = DAGs[[algo]]
     DAG = DAG.edge = dag[["dag.edge"]]
@@ -1318,14 +1505,7 @@ dag_network = function(
       DAG.direction[["graphAttributes"]][["Edges"]]
     DAG[["graphAttributes"]][["Edges"]][["width"]] =
       DAG.strength[["graphAttributes"]][["Edges"]][["width"]]
-    DAG[["plotOptions"]][["title"]] =
-      paste0("BN algorithm:\n\"", algo, "\"")
-    suppressWarnings({
-      DAG$plot = cowplot::as_grob(~plot(DAG))
-      DAG.edge$plot = cowplot::as_grob(~plot(DAG.edge))
-      DAG.strength$plot = cowplot::as_grob(~plot(DAG.strength))
-      DAG.direction$plot = cowplot::as_grob(~plot(DAG.direction))
-    })
+    DAG$title = paste0("BN algorithm: \"", algo, "\"")
     list(
       BN.bootstrap = bn,
       BN = bn[bn$strength > strength & bn$direction > direction,],
@@ -1335,25 +1515,48 @@ dag_network = function(
       DAG = DAG
     )
   })
-  names(dag.net) = algorithm
-  class(dag.net) = "dag.net"
-  attr(dag.net, "plot.params") = list(file = file,
+  names(bns.dag) = algorithm
+  class(bns.dag) = "bns.dag"
+  attr(bns.dag, "plot.params") = list(file = file,
                                       width = width,
                                       height = height,
                                       dpi = dpi)
-  return(dag.net)
+  return(bns.dag)
 }
 
 
 #' @rdname S3method.network
 #' @export
-print.dag.net = function(
+plot.bns.dag = function(x, algorithm, scale=1.2, ...) {
+  if(inherits(x, "qgraph")) {
+    algorithm = x$algo
+    title = x$title
+  } else {
+    # algorithm must be specified
+    title = x[[algorithm]][["DAG"]]$title
+    x = x[[algorithm]][["DAG"]]
+  }
+  class(x) = "qgraph"
+  suppressWarnings({
+    grob = as_grob(~plot(x))
+  })
+  ggplot() +
+    draw_grob(grob, scale=scale) +
+    labs(title=title)
+}
+
+
+#' @rdname S3method.network
+#' @param algorithm \[For `bns.dag`\] Algorithm(s) to display. Defaults to plot the finally integrated DAG from BN results for each algorithm in `x`.
+#' @export
+print.bns.dag = function(
     x,
+    algorithm = names(x),
+    scale = 1.2,
     file=NULL, width=6, height=4, dpi=500,
-    algorithm=names(x),
     ...
 ) {
-  if(inherits(x, "qgraph")) algorithm = attr(x, "algo")
+  if(inherits(x, "qgraph")) algorithm = x$algo
 
   if(is.null(file)) {
     plot.params = attr(x, "plot.params")
@@ -1363,41 +1566,31 @@ print.dag.net = function(
     dpi = plot.params$dpi
   }
 
-  p.list = list()
+  gg.list = list()
 
   for(algo in algorithm) {
-    suppressWarnings({
-      if(inherits(x, "qgraph")) {
-        p = cowplot::as_grob(~plot(x))
-      } else {
-        p = cowplot::as_grob(~plot(x[[algo]][["DAG"]]))
-      }
-    })
-    p.list = c(p.list, list(p))
+    gg = plot(x, algo, scale)
+    gg.list = c(gg.list, list(gg))
 
     cli::cli_text("Displaying DAG with BN algorithm {.val {algo}}")
 
     if(is.null(file)) {
-      if(inherits(x, "qgraph")) {
-        plot(x)
-      } else {
-        plot(x[[algo]][["DAG"]])
-      }
+      print(gg)
     } else {
       if(length(algorithm)==1) {
         file.i = file_insert_name(file, sprintf(
-          "_DAG.NET_BNs_%s", algo))
+          "_BNs.DAG_%s", algo))
       } else {
         file.i = file_insert_name(file, sprintf(
-          "_DAG.NET_BNs.%02d_%s", which(algo==algorithm), algo))
+          "_BNs.DAG.%02d_%s", which(algo==algorithm), algo))
       }
-      ggsave(p, filename=file.i, width=width, height=height, dpi=dpi)
+      ggsave(gg, filename=file.i, width=width, height=height, dpi=dpi)
       cli::cli_alert_success("Plot saved to {.path {file.i}}")
     }
   }
 
-  names(p.list) = algorithm
-  invisible(p.list)
+  names(gg.list) = algorithm
+  invisible(gg.list)
 }
 
 
@@ -1419,24 +1612,276 @@ bn_to_matrix = function(bn, strength=0.85, direction=0.50) {
 }
 
 
-file_insert_name = function(file, name) {
-  file = strsplit(file, "/")[[1]]
-  file[length(file)] = paste0(
-    file_ext(file[length(file)], "txt"),
-    name,
-    file_ext(file[length(file)], "ext")
-  )
-  file = paste(file, collapse="/")
-  return(file)
+#' Directed acyclic graphs (DAGs) via DPI exploratory analysis (causal discovery) for all significant partial *r*s.
+#'
+#' @inheritParams DPI_curve
+#' @param data A dataset with at least 3 variables.
+#' @param k.covs An integer vector (e.g., `1:10`) of number of random covariates (simulating potential omitted variables) added to each simulation sample. Defaults to `1`. For details, see [DPI()].
+#'
+#' @return
+#' Return a data.frame (class `dpi.dag`) of DPI exploration results.
+#'
+#' @seealso
+#' [S3method.network]
+#'
+#' [DPI()]
+#'
+#' [DPI_curve()]
+#'
+#' [BNs_dag()]
+#'
+#' [cor_net()]
+#'
+#' [p_to_bf()]
+#'
+#' @examples
+#' \donttest{# partial correlation networks (undirected)
+#' cor_net(airquality, "pcor")
+#'
+#' # directed acyclic graphs
+#' dpi.dag = DPI_dag(airquality, k.covs=c(1,3,5), seed=1)
+#' print(dpi.dag, k=1)  # DAG with DPI(k=1)
+#' print(dpi.dag, k=3)  # DAG with DPI(k=3)
+#' print(dpi.dag, k=5)  # DAG with DPI(k=5)
+#'
+#' # modify ggplot attributes
+#' gg = plot(dpi.dag, k=5, show.label=FALSE)
+#' gg + labs(title="DAG with DPI(k=5)")
+#'
+#' # visualize DPIs of multiple paths
+#' ggplot(dpi.dag$DPI, aes(x=k.cov, y=DPI)) +
+#'   geom_ribbon(aes(ymin=Sim.LLCI, ymax=Sim.ULCI, fill=path),
+#'               alpha=0.1) +
+#'   geom_line(aes(color=path), linewidth=0.7) +
+#'   geom_point(aes(color=path)) +
+#'   geom_hline(yintercept=0, color="red", linetype="dashed") +
+#'   scale_y_continuous(limits=c(NA, 0.5)) +
+#'   labs(color="Directed Prediction",
+#'        fill="Directed Prediction") +
+#'   theme_classic()
+#' }
+#' @export
+DPI_dag = function(
+    data,
+    k.covs = 1,
+    n.sim = 1000,
+    alpha = 0.05,
+    bonf = FALSE,
+    pseudoBF = FALSE,
+    seed = NULL,
+    progress,
+    file = NULL,
+    width = 6,
+    height = 4,
+    dpi = 500
+) {
+  if(missing(progress)) {
+    if(length(k.covs) < 5)
+      progress = FALSE
+    else
+      progress = TRUE
+  }
+
+  pcor = cor_net(data, "pcor", edge.width.max=1.5)
+  d.pcor = subset(pcor$cor, pcor$cor$pval < alpha)[, 1:4]
+  n.pcor = nrow(d.pcor)
+
+  k = length(data)
+  n = nrow(na.omit(data))
+  if(is.logical(bonf)) {
+    if(bonf)
+      bonf = k * (k - 1) / 2  # all combinations
+    else
+      bonf = 1
+  }
+  bonf = as.integer(bonf)
+
+  sig.method = ifelse(pseudoBF, "Sigmoid(log(PseudoBF10.xy))",
+                      "Sigmoid(p/alpha) = 1 - tanh(p.xy/alpha/2)")
+  cli::cli_text(
+    cli::col_cyan("Sample size: "),
+    "N.valid = {n}")
+  cli::cli_text(
+    cli::col_cyan("Significance score method: "),
+    "{cli::col_yellow({sig.method})}")
+  cli::cli_text(
+    cli::col_cyan("Simulation sample setting: "),
+    "k.covs = {cli::col_magenta({k.covs})},
+     n.sim = {cli::col_magenta({n.sim})},
+     seed = {cli::col_magenta({seed})}")
+  cli::cli_text(
+    cli::col_cyan("False positive rates (FPR) control: "),
+    "Alpha = {cli::col_magenta({format(alpha / bonf, digits=3)})}
+     (Bonferroni correction = {cli::col_magenta({bonf})})")
+
+  DPIs = lapply(seq_len(n.pcor), function(i) {
+    x = d.pcor[i, 1]
+    y = d.pcor[i, 2]
+    r.partial = d.pcor[i, 3]
+    p.rp = d.pcor[i, 4]
+    cli::cli_text(" ")
+    cli::cli_text(cli::col_cyan("Exploring [{i}/{n.pcor}]:"))
+    cli::cli_text(
+      "r.partial =
+       {cli::col_yellow({sprintf('%.3f', r.partial)})},
+       p = {cli::col_yellow({p.trans(p.rp)})}
+       {cli::col_yellow({sig.trans(p.rp)})}
+       (PseudoBF10 =
+       {cli::col_yellow({
+         sprintf('%.3f', p_to_bf(p.rp, n))
+       })})")
+    DPIs = DPI_curve(x=x, y=y, data=data,
+                     k.covs=k.covs, n.sim=n.sim,
+                     alpha=alpha, bonf=bonf, pseudoBF=pseudoBF,
+                     seed=seed, progress=progress)
+    bonf = attr(DPIs, "bonferroni")
+    sign = sign(DPIs[1, "z.value"])
+    from = ifelse(sign > 0, x, y)
+    to = ifelse(sign > 0, y, x)
+    for(j in seq_along(k.covs)) {
+      cli::cli_text("
+        ---------
+        DPI[{.val {from}}->{.val {to}}]({k.covs[j]}) =
+        {cli::col_green({sprintf('%.3f', sign * DPIs[j, 'Estimate'])})},
+        {ifelse(bonf==1, 'p', paste0('p(Bonf=', bonf, ')'))}
+        = {cli::col_green({p.trans(DPIs[j, 'p.z'])})}
+        {cli::col_green({sig.trans(DPIs[j, 'p.z'])})}")
+    }
+    return(data.frame(
+      var1 = x,
+      var2 = y,
+      from = from,
+      to = to,
+      path = paste(from, to, sep=" \u2192 "),
+      r.partial = r.partial,
+      p.rp = p.rp,
+      k.cov = DPIs$k.cov,
+      DPI = sign * DPIs$Estimate,
+      Sim.SE = DPIs$Sim.SE,
+      z.value = sign * DPIs$z.value,
+      p.z = DPIs$p.z,
+      Sim.LLCI = sign * DPIs$Sim.LLCI,
+      Sim.ULCI = sign * DPIs$Sim.ULCI
+    ))
+  })
+
+  dpi.dag = list(DPI=do.call("rbind", DPIs), qgraph=pcor$qgraph)
+  class(dpi.dag) = c("dpi.dag")
+  attr(dpi.dag, "plot.params") = list(file = file,
+                                      width = width,
+                                      height = height,
+                                      dpi = dpi)
+  return(dpi.dag)
 }
 
 
-file_ext = function(file, return=c("ext", "txt")) {
-  return = match.arg(return)
-  pos = regexpr("\\.([[:alnum:]]+)$", file)
-  if(return=="ext")
-    return(ifelse(pos > -1L, tolower(substring(file, pos)), ""))
-  if(return=="txt")
-    return(substring(file, 1L, last=pos-1L))
+#' @rdname S3method.network
+#' @export
+plot.dpi.dag = function(
+    x,
+    k = min(x$DPI$k.cov),
+    show.label = TRUE,
+    digits.dpi = 2,
+    color.dpi.insig = "#EEEEEEEE",
+    scale = 1.2,
+    ...
+) {
+  if(k %in% x$DPI$k.cov == FALSE)
+    warning(
+      "`k = ", k, "` is not in `x$DPI$k.cov`! ",
+      "Please input another `k`.\n  ",
+      "Partial correlation network, instead of a DAG, is plotted.")
+  dpi = subset(x$DPI, x$DPI$k.cov==k)
+  p = x$qgraph
+
+  vars = p[["Arguments"]][["labels"]]
+  vars.from = p[["Edgelist"]][["from"]]
+  vars.to = p[["Edgelist"]][["to"]]
+
+  for(i in seq_len(nrow(dpi))) {
+    var1 = dpi[i, "var1"]
+    var2 = dpi[i, "var2"]
+    reverse = var1 == dpi[i, "to"]
+    DPI = dpi[i, "DPI"]
+    p.z = dpi[i, "p.z"]
+    sig = p_to_sig(p.z)
+    id = which(vars[vars.from]==var1 & vars[vars.to]==var2)
+
+    if(p.z >= 0.05) {
+      # undirected => faded grey edge
+      p[["graphAttributes"]][["Edges"]][["color"]][id] = color.dpi.insig
+    } else {
+      # directed
+      p[["Edgelist"]][["directed"]][id] = TRUE
+      if(reverse) {
+        from.id = p[["Edgelist"]][["from"]][id]
+        to.id = p[["Edgelist"]][["to"]][id]
+        p[["Edgelist"]][["from"]][id] = to.id
+        p[["Edgelist"]][["to"]][id] = from.id
+      }
+    }
+    p[["graphAttributes"]][["Edges"]][["labels"]][id] =
+      gsub(
+        "0\\.", ".",
+        paste0(
+          p[["graphAttributes"]][["Edges"]][["labels"]][id],
+          "\nDPI.", k, " = ",
+          sprintf(paste0("%.", digits.dpi, "f"), DPI),
+          sig
+        )
+      )
+  }
+
+  if(show.label==FALSE) {
+    p[["graphAttributes"]][["Edges"]][["labels"]] =
+      rep(NA, times=length(p[["graphAttributes"]][["Edges"]][["labels"]]))
+  }
+
+  suppressWarnings({
+    grob = as_grob(~plot(p))
+  })
+  ggplot() + draw_grob(grob, scale=scale)
+}
+
+
+#' @rdname S3method.network
+#' @param k \[For `dpi.dag`\] A single value of `k.cov` to produce the DPI(k) DAG. Defaults to `min(x$DPI$k.cov)`.
+#' @param show.label \[For `dpi.dag`\] Show labels of partial correlations, DPI(k), and their significance on edges. Defaults to `TRUE`.
+#' @param digits.dpi \[For `dpi.dag`\] Number of decimal places of DPI values displayed on DAG edges. Defaults to `2`.
+#' @param color.dpi.insig \[For `dpi.dag`\] Edge color for insignificant DPIs. Defaults to `"#EEEEEEEE"` (faded light grey).
+#' @export
+print.dpi.dag = function(
+    x,
+    k = min(x$DPI$k.cov),
+    show.label = TRUE,
+    digits.dpi = 2,
+    color.dpi.insig = "#EEEEEEEE",
+    scale = 1.2,
+    file=NULL, width=6, height=4, dpi=500,
+    ...
+) {
+  if(is.null(file)) {
+    plot.params = attr(x, "plot.params")
+    file = plot.params$file
+    width = plot.params$width
+    height = plot.params$height
+    dpi = plot.params$dpi
+  }
+
+  gg = plot(x, k, show.label,
+            digits.dpi, color.dpi.insig, scale)
+
+  if(k %in% x$DPI$k.cov)
+    cli::cli_text("Displaying DAG with DPI algorithm (k.cov = {.val {k}})")
+
+  if(is.null(file)) {
+    print(gg)
+  } else {
+    file = file_insert_name(file, "_DPI.DAG")
+    ggsave(gg, filename=file, width=width, height=height, dpi=dpi)
+    cli::cli_alert_success("Plot saved to {.path {file}}")
+  }
+
+  invisible(gg)
 }
 
