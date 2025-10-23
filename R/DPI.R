@@ -413,7 +413,7 @@ NULL
 #' - `Significance = 1 - tanh(p.beta.xy/alpha/2)`
 #' @param bonf Bonferroni correction to control for false positive rates: `alpha` is divided by, and *p* values are multiplied by, the number of comparisons.
 #' - Defaults to `FALSE`: No correction, suitable if you plan to test only one pair of variables.
-#' - `TRUE`: Using `k * (k - 1) / 2` (number of all combinations of variable pairs) where `k = length(data)`.
+#' - `TRUE`: Using `k * (k - 1) / 2` (all pairs of variables) where `k = length(data)`.
 #' - A user-specified number of comparisons.
 #' @param pseudoBF Use normalized pseudo Bayes Factors `sigmoid(log(PseudoBF10))` alternatively as the `Significance` score (0~1). Pseudo Bayes Factors are computed from *p* value of X-Y partial relationship and total sample size, using the transformation rules proposed by Wagenmakers (2022) \doi{10.31234/osf.io/egydq}.
 #'
@@ -511,6 +511,7 @@ DPI = function(
     else
       progress = TRUE
   }
+  dpi.plot = dpi
 
   formula.y = glue("{y} ~ {x} + .")
   formula.x = glue("{x} ~ {y} + .")
@@ -643,7 +644,7 @@ DPI = function(
   attr(dpi, "plot.params") = list(file = file,
                                   width = width,
                                   height = height,
-                                  dpi = dpi)
+                                  dpi = dpi.plot)
   return(dpi)
 }
 
@@ -960,10 +961,10 @@ DPI_curve = function(
       "simulation samples estimated in {cli::pb_elapsed}")
   )
   dpi.curve = lapply(k.covs, function(k.cov) {
-    dpi = DPI(model, y, x, data,
-              k.cov, n.sim,
-              alpha, bonf, pseudoBF,
-              seed, progress=FALSE)
+    dpi = DPI(model=model, x=x, y=y, data=data,
+              k.cov=k.cov, n.sim=n.sim,
+              alpha=alpha, bonf=bonf, pseudoBF=pseudoBF,
+              seed=seed, progress=FALSE)
     dpi.summ = cbind(data.frame(k.cov), summary(dpi)[["dpi.summ"]])
     row.names(dpi.summ) = k.cov
     attr(dpi.summ, "bonferroni") = attr(dpi, "bonferroni")
@@ -1569,7 +1570,7 @@ print.bns.dag = function(
   gg.list = list()
 
   for(algo in algorithm) {
-    gg = plot(x, algo, scale)
+    gg = plot(x=x, algorithm=algo, scale=scale)
     gg.list = c(gg.list, list(gg))
 
     cli::cli_text("Displaying DAG with BN algorithm {.val {algo}}")
@@ -1644,9 +1645,12 @@ bn_to_matrix = function(bn, strength=0.85, direction=0.50) {
 #' print(dpi.dag, k=3)  # DAG with DPI(k=3)
 #' print(dpi.dag, k=5)  # DAG with DPI(k=5)
 #'
+#' # settings of edge label and transparency
+#' print(dpi.dag, k=1, show.label=FALSE, faded.dpi=TRUE)
+#'
 #' # modify ggplot attributes
-#' gg = plot(dpi.dag, k=5, show.label=FALSE)
-#' gg + labs(title="DAG with DPI(k=5)")
+#' gg = plot(dpi.dag, k=5, show.label=FALSE, faded.dpi=TRUE)
+#' gg + labs(title="DAG with DPI (k=5)")
 #'
 #' # visualize DPIs of multiple paths
 #' ggplot(dpi.dag$DPI, aes(x=k.cov, y=DPI)) +
@@ -1695,6 +1699,7 @@ DPI_dag = function(
       bonf = 1
   }
   bonf = as.integer(bonf)
+  Alpha = alpha / bonf
 
   sig.method = ifelse(pseudoBF, "Sigmoid(log(PseudoBF10.xy))",
                       "Sigmoid(p/alpha) = 1 - tanh(p.xy/alpha/2)")
@@ -1711,7 +1716,7 @@ DPI_dag = function(
      seed = {cli::col_magenta({seed})}")
   cli::cli_text(
     cli::col_cyan("False positive rates (FPR) control: "),
-    "Alpha = {cli::col_magenta({format(alpha / bonf, digits=3)})}
+    "Alpha = {cli::col_magenta({format(Alpha, digits=3)})}
      (Bonferroni correction = {cli::col_magenta({bonf})})")
 
   DPIs = lapply(seq_len(n.pcor), function(i) {
@@ -1719,6 +1724,7 @@ DPI_dag = function(
     y = d.pcor[i, 2]
     r.partial = d.pcor[i, 3]
     p.rp = d.pcor[i, 4]
+    bf = p_to_bf(p.rp, n)
     cli::cli_text(" ")
     cli::cli_text(cli::col_cyan("Exploring [{i}/{n.pcor}]:"))
     cli::cli_text(
@@ -1728,7 +1734,7 @@ DPI_dag = function(
        {cli::col_yellow({sig.trans(p.rp)})}
        (PseudoBF10 =
        {cli::col_yellow({
-         sprintf('%.3f', p_to_bf(p.rp, n))
+         sprintf(ifelse(bf < 1e+5, '%.3f', '%.3e'), bf)
        })})")
     DPIs = DPI_curve(x=x, y=y, data=data,
                      k.covs=k.covs, n.sim=n.sim,
@@ -1739,13 +1745,16 @@ DPI_dag = function(
     from = ifelse(sign > 0, x, y)
     to = ifelse(sign > 0, y, x)
     for(j in seq_along(k.covs)) {
+      p.z = DPIs[j, "p.z"]
+      sig = ifelse(Alpha == 0.05, sig.trans(p.z),
+                   ifelse(p.z < Alpha, "(sig)", ""))
       cli::cli_text("
         ---------
         DPI[{.val {from}}->{.val {to}}]({k.covs[j]}) =
         {cli::col_green({sprintf('%.3f', sign * DPIs[j, 'Estimate'])})},
         {ifelse(bonf==1, 'p', paste0('p(Bonf=', bonf, ')'))}
-        = {cli::col_green({p.trans(DPIs[j, 'p.z'])})}
-        {cli::col_green({sig.trans(DPIs[j, 'p.z'])})}")
+        = {cli::col_green({p.trans(p.z)})}
+        {cli::col_green({sig})}")
     }
     return(data.frame(
       var1 = x,
@@ -1767,6 +1776,7 @@ DPI_dag = function(
 
   dpi.dag = list(DPI=do.call("rbind", DPIs), qgraph=pcor$qgraph)
   class(dpi.dag) = c("dpi.dag")
+  attr(dpi.dag, "alpha") = Alpha  # alpha / bonf
   attr(dpi.dag, "plot.params") = list(file = file,
                                       width = width,
                                       height = height,
@@ -1782,6 +1792,8 @@ plot.dpi.dag = function(
     k = min(x$DPI$k.cov),
     show.label = TRUE,
     digits.dpi = 2,
+    faded.dpi = FALSE,
+    faded.dpi.limit = c(0, 0.25),
     color.dpi.insig = "#EEEEEEEE",
     scale = 1.2,
     ...
@@ -1793,6 +1805,10 @@ plot.dpi.dag = function(
       "Partial correlation network, instead of a DAG, is plotted.")
   dpi = subset(x$DPI, x$DPI$k.cov==k)
   p = x$qgraph
+  alpha = attr(x, "alpha")
+  dmin = min(faded.dpi.limit)
+  dmax = max(faded.dpi.limit)
+  drange = dmax - dmin
 
   vars = p[["Arguments"]][["labels"]]
   vars.from = p[["Edgelist"]][["from"]]
@@ -1801,13 +1817,14 @@ plot.dpi.dag = function(
   for(i in seq_len(nrow(dpi))) {
     var1 = dpi[i, "var1"]
     var2 = dpi[i, "var2"]
-    reverse = var1 == dpi[i, "to"]
+    reverse = (var1 == dpi[i, "to"])
     DPI = dpi[i, "DPI"]
     p.z = dpi[i, "p.z"]
-    sig = p_to_sig(p.z)
+    sig = ifelse(alpha == 0.05, p_to_sig(p.z),
+                 ifelse(p.z < alpha, "(sig)", ""))
     id = which(vars[vars.from]==var1 & vars[vars.to]==var2)
 
-    if(p.z >= 0.05) {
+    if(p.z >= alpha) {
       # undirected => faded grey edge
       p[["graphAttributes"]][["Edges"]][["color"]][id] = color.dpi.insig
     } else {
@@ -1818,6 +1835,14 @@ plot.dpi.dag = function(
         to.id = p[["Edgelist"]][["to"]][id]
         p[["Edgelist"]][["from"]][id] = to.id
         p[["Edgelist"]][["to"]][id] = from.id
+      }
+      if(faded.dpi) {
+        p[["graphAttributes"]][["Edges"]][["color"]][id] =
+          gsub("FF$",
+               sprintf("%02X", round(
+                 max(min((abs(DPI) - dmin) / drange, 1), 0) * 255
+               )),
+               p[["graphAttributes"]][["Edges"]][["color"]][id])
       }
     }
     p[["graphAttributes"]][["Edges"]][["labels"]][id] =
@@ -1848,6 +1873,8 @@ plot.dpi.dag = function(
 #' @param k \[For `dpi.dag`\] A single value of `k.cov` to produce the DPI(k) DAG. Defaults to `min(x$DPI$k.cov)`.
 #' @param show.label \[For `dpi.dag`\] Show labels of partial correlations, DPI(k), and their significance on edges. Defaults to `TRUE`.
 #' @param digits.dpi \[For `dpi.dag`\] Number of decimal places of DPI values displayed on DAG edges. Defaults to `2`.
+#' @param faded.dpi \[For `dpi.dag`\] Transparency of edges according to the value of DPI. Defaults to `FALSE`.
+#' @param faded.dpi.limit \[For `dpi.dag`\] Lower and upper limits of `abs(DPI)` for `"00"` and `"FF"` transparency of edges. Defaults to `c(0, 0.25)`.
 #' @param color.dpi.insig \[For `dpi.dag`\] Edge color for insignificant DPIs. Defaults to `"#EEEEEEEE"` (faded light grey).
 #' @export
 print.dpi.dag = function(
@@ -1855,6 +1882,8 @@ print.dpi.dag = function(
     k = min(x$DPI$k.cov),
     show.label = TRUE,
     digits.dpi = 2,
+    faded.dpi = FALSE,
+    faded.dpi.limit = c(0, 0.25),
     color.dpi.insig = "#EEEEEEEE",
     scale = 1.2,
     file=NULL, width=6, height=4, dpi=500,
@@ -1868,8 +1897,12 @@ print.dpi.dag = function(
     dpi = plot.params$dpi
   }
 
-  gg = plot(x, k, show.label,
-            digits.dpi, color.dpi.insig, scale)
+  gg = plot(x=x, k=k,
+            show.label=show.label,
+            digits.dpi=digits.dpi,
+            faded.dpi=faded.dpi,
+            color.dpi.insig=color.dpi.insig,
+            scale=scale)
 
   if(k %in% x$DPI$k.cov)
     cli::cli_text("Displaying DAG with DPI algorithm (k.cov = {.val {k}})")
